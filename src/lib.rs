@@ -78,9 +78,11 @@ pub mod macros {
 pub mod app;
 pub mod callback;
 pub mod components;
+pub mod context;
 pub mod format;
 pub mod html;
 pub mod scheduler;
+pub mod service;
 pub mod utils;
 pub mod virtual_dom;
 
@@ -147,6 +149,10 @@ where
 pub mod prelude {
     #[cfg(feature = "agent")]
     pub use crate::agent::{Bridge, Bridged, Threaded};
+    pub use crate::service::{
+        ServiceSpec, CommonServiceBuilder, SsrAwareServiceBuilder
+    };
+    pub use crate::context::{RenderingContext};
     pub use crate::app::App;
     pub use crate::callback::Callback;
     pub use crate::events::*;

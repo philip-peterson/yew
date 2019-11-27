@@ -33,6 +33,7 @@
 //! ```
 
 use crate::callback::Callback;
+use crate::context::{RenderingContext};
 use crate::html::{ChangeData, Component, ComponentLink, Html, ShouldRender};
 use crate::macros::{html, Properties};
 
@@ -70,7 +71,7 @@ where
     type Message = Msg;
     type Properties = Props<T>;
 
-    fn create(props: Self::Properties, _: ComponentLink<Self>) -> Self {
+    fn create(props: Self::Properties, _: ComponentLink<Self>, _: RenderingContext) -> Self {
         Self { props }
     }
 

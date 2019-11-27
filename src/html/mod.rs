@@ -11,6 +11,7 @@ pub(crate) use scope::ComponentUpdate;
 pub use scope::Scope;
 
 use crate::callback::Callback;
+use crate::context::{RenderingContext};
 use crate::virtual_dom::{VChild, VList, VNode};
 use std::any::TypeId;
 use std::cell::RefCell;
@@ -32,7 +33,7 @@ pub trait Component: Sized + 'static {
     /// Properties type of component implementation.
     type Properties: Properties;
     /// Initialization routine which could use a context.
-    fn create(props: Self::Properties, link: ComponentLink<Self>) -> Self;
+    fn create(props: Self::Properties, link: ComponentLink<Self>, rendering_context: RenderingContext) -> Self;
     /// Called after the component has been attached to the VDOM and it is safe to receive messages
     /// from agents but before the browser updates the screen. If true is returned, the view will
     /// be re-rendered and the user will not see the initial render.

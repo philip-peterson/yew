@@ -55,7 +55,7 @@ impl Component for List {
     type Message = Msg;
     type Properties = Props;
 
-    fn create(props: Self::Properties, _: ComponentLink<Self>) -> Self {
+    fn create(props: Self::Properties, _: ComponentLink<Self>, _: RenderingContext) -> Self {
         List {
             props,
             hovered: Hovered::None,

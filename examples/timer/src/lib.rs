@@ -2,7 +2,27 @@
 
 use std::time::Duration;
 use yew::services::{ConsoleService, IntervalService, Task, TimeoutService};
-use yew::{html, Callback, Component, ComponentLink, Html, ShouldRender};
+use yew::{html, Callback, Component, ComponentLink, Html, ShouldRender, RenderingContext, ServiceSpec,
+    SsrAwareServiceBuilder, CommonServiceBuilder};
+
+struct MyServiceBuilder;
+struct MyService;
+
+impl SsrAwareServiceBuilder<'static, ()> for MyServiceBuilder {
+    type ServiceSpec = MyService;
+
+    fn create(rendering_context: RenderingContext, params: ()) -> Option<MyService> {
+        None
+    }
+}
+
+impl ServiceSpec<()> for MyService {
+    fn new(rendering_context: Option<RenderingContext>, params: ()) -> MyService {
+        Self {
+
+        }
+    }
+}
 
 pub struct Model {
     timeout: TimeoutService,
@@ -27,7 +47,9 @@ impl Component for Model {
     type Message = Msg;
     type Properties = ();
 
-    fn create(_: Self::Properties, mut link: ComponentLink<Self>) -> Self {
+    fn create(_: Self::Properties, mut link: ComponentLink<Self>,
+        rendering_context: RenderingContext
+    ) -> Self {
         // This callback doesn't send any message to a scope
         let callback = |_| {
             println!("Example of a standalone callback.");

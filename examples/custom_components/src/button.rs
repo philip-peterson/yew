@@ -20,7 +20,7 @@ impl Component for Button {
     type Message = Msg;
     type Properties = Props;
 
-    fn create(props: Self::Properties, _: ComponentLink<Self>) -> Self {
+    fn create(props: Self::Properties, _: ComponentLink<Self>, _: RenderingContext) -> Self {
         Button {
             title: props.title,
             onsignal: props.onsignal,

@@ -14,7 +14,7 @@ impl Component for Child {
     type Message = ();
     type Properties = ChildProperties;
 
-    fn create(props: Self::Properties, _: ComponentLink<Self>) -> Self {
+    fn create(props: Self::Properties, _: ComponentLink<Self>, _: RenderingContext) -> Self {
         Child
     }
 
@@ -37,7 +37,7 @@ impl Component for ChildContainer {
     type Message = ();
     type Properties = ChildContainerProperties;
 
-    fn create(props: Self::Properties, _: ComponentLink<Self>) -> Self {
+    fn create(props: Self::Properties, _: ComponentLink<Self>, _: RenderingContext) -> Self {
         ChildContainer
     }
 
