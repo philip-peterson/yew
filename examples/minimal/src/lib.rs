@@ -10,7 +10,7 @@ impl Component for Model {
     type Message = Msg;
     type Properties = ();
 
-    fn create(_: Self::Properties, _: ComponentLink<Self>, _: RenderingContext) -> Self {
+    fn create(_: Self::Properties, _: ComponentLink<Self>) -> Self {
         Model {}
     }
 

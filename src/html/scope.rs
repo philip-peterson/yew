@@ -183,7 +183,7 @@ struct ReadyState<COMP: Component> {
 impl<COMP: Component> ReadyState<COMP> {
     fn create(self) -> CreatedState<COMP> {
         CreatedState {
-            component: COMP::create(self.props, self.link, self.scope.rendering_context),
+            component: COMP::create(self.props, self.link),
             scope: self.scope,
             element: self.element,
             last_frame: self.ancestor,

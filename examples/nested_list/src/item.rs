@@ -24,7 +24,7 @@ impl Component for ListItem {
     type Message = Msg;
     type Properties = Props;
 
-    fn create(props: Self::Properties, _: ComponentLink<Self>, _: RenderingContext) -> Self {
+    fn create(props: Self::Properties, _: ComponentLink<Self>) -> Self {
         ListItem { props }
     }
 

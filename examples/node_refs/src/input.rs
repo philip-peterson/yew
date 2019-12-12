@@ -18,7 +18,7 @@ impl Component for InputComponent {
     type Message = Msg;
     type Properties = Props;
 
-    fn create(props: Self::Properties, _: ComponentLink<Self>, _: RenderingContext) -> Self {
+    fn create(props: Self::Properties, _: ComponentLink<Self>) -> Self {
         InputComponent { props }
     }
 

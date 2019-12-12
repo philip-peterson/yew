@@ -35,7 +35,7 @@ impl Component for Counter {
     type Message = Msg;
     type Properties = Props;
 
-    fn create(props: Self::Properties, _: ComponentLink<Self>, _: RenderingContext) -> Self {
+    fn create(props: Self::Properties, _: ComponentLink<Self>) -> Self {
         Counter {
             value: props.initial,
             color: props.color,

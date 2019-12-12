@@ -71,7 +71,7 @@ where
     type Message = Msg;
     type Properties = Props<T>;
 
-    fn create(props: Self::Properties, _: ComponentLink<Self>, _: RenderingContext) -> Self {
+    fn create(props: Self::Properties, _: ComponentLink<Self>) -> Self {
         Self { props }
     }
 
