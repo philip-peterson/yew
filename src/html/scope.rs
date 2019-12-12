@@ -1,5 +1,5 @@
 use super::*;
-use crate::context::RenderingContext;
+use crate::context::{RenderingContext};
 use crate::scheduler::{scheduler, Runnable, Shared};
 use crate::virtual_dom::{VDiff, VNode};
 use std::cell::RefCell;
@@ -20,7 +20,6 @@ pub(crate) enum ComponentUpdate<COMP: Component> {
 /// A context which allows sending messages to a component.
 pub struct Scope<COMP: Component> {
     shared_state: Shared<ComponentState<COMP>>,
-    rendering_context: RenderingContext,
 }
 
 impl<COMP: Component> fmt::Debug for Scope<COMP> {
@@ -33,7 +32,6 @@ impl<COMP: Component> Clone for Scope<COMP> {
     fn clone(&self) -> Self {
         Scope {
             shared_state: self.shared_state.clone(),
-            rendering_context: self.rendering_context.clone(),
         }
     }
 }
@@ -48,17 +46,9 @@ impl<COMP: Component> Scope<COMP> {
     /// visible for testing
     pub fn new() -> Self {
         let shared_state = Rc::new(RefCell::new(ComponentState::Empty));
-        let rendering_context = RenderingContext::Runtime;
         Scope {
             shared_state,
-            rendering_context,
         }
-    }
-
-    pub(crate) fn with_rendering_context(self, rendering_context: RenderingContext) -> Self {
-        let mut scope = self.clone();
-        scope.rendering_context = rendering_context;
-        return scope;
     }
 
     /// Mounts a component with `props` to the specified `element` in the DOM.
@@ -69,7 +59,7 @@ impl<COMP: Component> Scope<COMP> {
         node_ref: NodeRef,
         props: COMP::Properties,
     ) -> Scope<COMP> {
-        let mut scope = self.with_rendering_context(RenderingContext::Runtime);
+        let mut scope = self;
         let link = ComponentLink::connect(&scope);
         let ready_state = ReadyState {
             scope: scope.clone(),
@@ -82,33 +72,10 @@ impl<COMP: Component> Scope<COMP> {
         *scope.shared_state.borrow_mut() = ComponentState::Ready(ready_state);
         scope.create();
         scope.mounted();
+
         scope
     }
-
-    /// Mounts a component with `props` to the specified `element` in the DOM.
-    pub(crate) fn mount_in_place_using_ssr(
-        self,
-        element: Element,
-        ancestor: Option<VNode<COMP>>,
-        node_ref: NodeRef,
-        props: COMP::Properties,
-    ) -> Scope<COMP> {
-        let mut scope = self.with_rendering_context(RenderingContext::StaticRenderingPhase);
-        let link = ComponentLink::connect(&scope);
-        let ready_state = ReadyState {
-            scope: scope.clone(),
-            element,
-            node_ref,
-            link,
-            props,
-            ancestor,
-        };
-        *scope.shared_state.borrow_mut() = ComponentState::Ready(ready_state);
-        scope.create();
-        scope.mounted();
-        scope
-    }
-
+    
     /// Schedules a task to call the mounted method on a component and optionally re-render
     pub(crate) fn mounted(&mut self) {
         let shared_state = self.shared_state.clone();
