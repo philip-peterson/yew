@@ -40,7 +40,7 @@ where
         self.mount_base(element)
     }
 
-    /// Same as `mount` but uses SSR
+    /// Same as `mount` but uses SSR.
     pub fn mount_using_ssr(self, element: Element) -> Scope<COMP> {
         set_current_rendering_context(RenderingContext::StaticRenderingPhase);
         self.mount_base(element)
@@ -105,7 +105,7 @@ where
         )
     }
 
-    /// Same as `mount_as_body` but uses SSR
+    /// Same as `mount_as_body` but uses SSR.
     pub fn mount_as_body_using_ssr(self) -> Scope<COMP> {
         set_current_rendering_context(RenderingContext::StaticRenderingPhase);
         self.mount_as_body_base()
@@ -137,7 +137,7 @@ where
         self.mount_with_props_base(element, props)
     }
 
-    /// The same as `mount_with_props` but does an SSR pass instead of mounting for runtime.
+    /// The same as `mount_with_props` but uses SSR.
     pub fn mount_with_props_using_ssr(self, element: Element, props: COMP::Properties) -> Scope<COMP> {
         set_current_rendering_context(RenderingContext::StaticRenderingPhase);
         self.mount_with_props_base(element, props)
@@ -158,7 +158,7 @@ where
         self.mount_to_body_with_props_base(props)
     }
 
-    /// The same as `mount_to_body_with_props` but does an SSR pass instead of mounting for runtime.
+    /// The same as `mount_to_body_with_props` but uses SSR.
     pub fn mount_to_body_with_props_using_ssr(self, props: COMP::Properties) -> Scope<COMP> {
         set_current_rendering_context(RenderingContext::StaticRenderingPhase);
         self.mount_to_body_with_props_base(props)
@@ -189,7 +189,7 @@ where
         self.mount_as_body_with_props_base(props)
     }
 
-    /// The same as `mount_as_body_with_props` but does an SSR pass instead of mounting for runtime.
+    /// The same as `mount_as_body_with_props` but uses SSR.
     pub fn mount_as_body_with_props_using_ssr(self, props: COMP::Properties) -> Scope<COMP> {
         set_current_rendering_context(RenderingContext::StaticRenderingPhase);
         self.mount_as_body_with_props_base(props)
