@@ -40,7 +40,7 @@ where
         self.mount_base(element)
     }
 
-    /// Similar to mount but uses SSR
+    /// Same as `mount` but uses SSR
     pub fn mount_using_ssr(self, element: Element) -> Scope<COMP> {
         set_current_rendering_context(RenderingContext::StaticRenderingPhase);
         self.mount_base(element)
@@ -66,7 +66,7 @@ where
         self.mount(element)
     }
 
-    /// Same as mount_to_body but uses SSR.
+    /// Same as `mount_to_body` but uses SSR.
     pub fn mount_to_body_using_ssr(self) -> Scope<COMP> {
         // Bootstrap the component for `Window` environment only (not for `Worker`)
         let element = document()
@@ -105,7 +105,7 @@ where
         )
     }
 
-    /// Same as mount_as_body but uses SSR
+    /// Same as `mount_as_body` but uses SSR
     pub fn mount_as_body_using_ssr(self) -> Scope<COMP> {
         set_current_rendering_context(RenderingContext::StaticRenderingPhase);
         self.mount_as_body_base()
