@@ -7,8 +7,8 @@ mod listener;
 mod scope;
 
 pub use listener::*;
-pub(crate) use scope::ComponentUpdate;
-pub use scope::Scope;
+pub(crate) use scope::{ComponentUpdate, HiddenScope};
+pub use scope::{Scope, ScopeHolder};
 
 use crate::callback::Callback;
 use crate::context::{RenderingContext};
@@ -19,9 +19,6 @@ use std::fmt;
 use std::rc::Rc;
 use stdweb::unstable::TryFrom;
 use stdweb::web::Node;
-
-#[cfg(all(target_arch = "wasm32", not(cargo_web)))]
-use std::future::Future;
 
 /// This type indicates that component should be rendered again.
 pub type ShouldRender = bool;
@@ -52,13 +49,13 @@ pub trait Component: Sized + 'static {
         TypeId::of::<Self::Properties>() != TypeId::of::<()>()
     }
     /// Called by rendering loop.
-    fn view(&self) -> Html<Self>;
+    fn view(&self) -> Html;
     /// Called for finalization on the final point of the component's lifetime.
     fn destroy(&mut self) {} // TODO Replace with `Drop`
 }
 
 /// A type which expected as a result of `view` function implementation.
-pub type Html<MSG> = VNode<MSG>;
+pub type Html = VNode;
 
 /// A type used for accepting children elements in Component::Properties.
 ///
@@ -70,7 +67,7 @@ pub type Html<MSG> = VNode<MSG>;
 ///# use yew::{Children, Html, Properties, Component, ComponentLink, html};
 ///# #[derive(Properties)]
 ///# struct WrapperProps {
-///#     children: Children<Wrapper>,
+///#     children: Children,
 ///# }
 ///# struct Wrapper;
 ///# impl Component for Wrapper{
@@ -79,7 +76,7 @@ pub type Html<MSG> = VNode<MSG>;
 ///#     fn create(props: Self::Properties,link: ComponentLink<Self>) -> Self {unimplemented!()}
 ///#     fn update(&mut self,msg: Self::Message) -> bool {unimplemented!()}
 ///#     // This is not a valid implementation.  This is done for space convenience.
-///#     fn view(&self) -> Html<Self> {
+///#     fn view(&self) -> Html {
 /// html! {
 ///     <Wrapper>
 ///         <h4>{ "Hi" }</h4>
@@ -98,7 +95,7 @@ pub type Html<MSG> = VNode<MSG>;
 ///# use yew::{Children, Html, Properties, Renderable, Component, ComponentLink, html};
 /// #[derive(Properties)]
 /// struct WrapperProps {
-///     children: Children<Wrapper>,
+///     children: Children,
 /// }
 ///
 ///# struct Wrapper {props: WrapperProps};
@@ -108,7 +105,7 @@ pub type Html<MSG> = VNode<MSG>;
 ///#     type Properties = WrapperProps;
 ///#     fn create(props: Self::Properties,link: ComponentLink<Self>) -> Self {unimplemented!()}
 ///#     fn update(&mut self,msg: Self::Message) -> bool {unimplemented!()}
-///     fn view(&self) -> Html<Wrapper> {
+///     fn view(&self) -> Html {
 ///         html! {
 ///             <div id="container">
 ///                 { self.props.children.render() }
@@ -117,7 +114,7 @@ pub type Html<MSG> = VNode<MSG>;
 ///     }
 /// }
 /// ```
-pub type Children<T> = ChildrenRenderer<Html<T>>;
+pub type Children = ChildrenRenderer<Html>;
 
 /// A type used for accepting children elements in Component::Properties and accessing their props.
 ///
@@ -130,7 +127,7 @@ pub type Children<T> = ChildrenRenderer<Html<T>>;
 ///#
 ///# #[derive(Properties)]
 ///# struct ListProps {
-///#     children: ChildrenWithProps<ListItem, List>,
+///#     children: ChildrenWithProps<ListItem>,
 ///# }
 ///# struct List;
 ///# impl Component for List {
@@ -138,7 +135,7 @@ pub type Children<T> = ChildrenRenderer<Html<T>>;
 ///#     type Properties = ListProps;
 ///#     fn create(props: Self::Properties, link: ComponentLink<Self>) -> Self {unimplemented!()}
 ///#     fn update(&mut self, msg: Self::Message) -> bool {unimplemented!()}
-///#     fn view(&self) -> Html<List> {unimplemented!()}
+///#     fn view(&self) -> Html {unimplemented!()}
 ///# }
 ///# #[derive(Properties)]
 ///# struct ListItemProps {
@@ -150,9 +147,9 @@ pub type Children<T> = ChildrenRenderer<Html<T>>;
 ///#     type Properties = ListItemProps;
 ///#     fn create(props: Self::Properties, link: ComponentLink<Self>) -> Self {unimplemented!()}
 ///#     fn update(&mut self, msg: Self::Message) -> bool {unimplemented!()}
-///#     fn view(&self) -> Html<Self> {unimplemented!()}
+///#     fn view(&self) -> Html {unimplemented!()}
 ///# }
-///# fn view() -> Html<List> {
+///# fn view() -> Html {
 /// html!{
 ///   <List>
 ///     <ListItem value="a" />
@@ -172,7 +169,7 @@ pub type Children<T> = ChildrenRenderer<Html<T>>;
 ///#
 /// #[derive(Properties)]
 /// struct ListProps {
-///   children: ChildrenWithProps<ListItem, List>,
+///   children: ChildrenWithProps<ListItem>,
 /// }
 ///
 ///# struct List {props: ListProps};
@@ -182,7 +179,7 @@ pub type Children<T> = ChildrenRenderer<Html<T>>;
 ///#     fn create(props: Self::Properties,link: ComponentLink<Self>) -> Self {unimplemented!()}
 ///#     fn update(&mut self,msg: Self::Message) -> bool {unimplemented!()}
 ///     // ...
-///     fn view(&self) -> Html<Self> {
+///     fn view(&self) -> Html {
 ///         html!{{
 ///             for self.props.children.iter().map(|mut item| {
 ///                 item.props.value = format!("item-{}", item.props.value);
@@ -203,10 +200,10 @@ pub type Children<T> = ChildrenRenderer<Html<T>>;
 ///#     type Properties = ListItemProps;
 ///#     fn create(props: Self::Properties, link: ComponentLink<Self>) -> Self {unimplemented!()}
 ///#     fn update(&mut self, msg: Self::Message) -> bool {unimplemented!()}
-///#     fn view(&self) -> Html<ListItem> {unimplemented!()}
+///#     fn view(&self) -> Html {unimplemented!()}
 ///# }
 /// ```
-pub type ChildrenWithProps<C, P> = ChildrenRenderer<VChild<C, P>>;
+pub type ChildrenWithProps<CHILD> = ChildrenRenderer<VChild<CHILD>>;
 
 /// A type used for rendering children html.
 pub struct ChildrenRenderer<T> {
@@ -237,7 +234,7 @@ impl<T> ChildrenRenderer<T> {
 
     /// Render children components and return `Iterator`
     pub fn iter(&self) -> impl Iterator<Item = T> {
-        (&self.boxed_render)().into_iter()
+        self.to_vec().into_iter()
     }
 }
 
@@ -246,6 +243,7 @@ impl<T> Default for ChildrenRenderer<T> {
         // False positive: https://github.com/rust-lang/rust-clippy/issues/4002
         #[allow(clippy::redundant_closure)]
         let boxed_render = Box::new(|| Vec::new());
+
         Self {
             len: 0,
             boxed_render,
@@ -259,16 +257,12 @@ impl<T> fmt::Debug for ChildrenRenderer<T> {
     }
 }
 
-impl<T, COMP: Component> Renderable<COMP> for ChildrenRenderer<T>
+impl<T> Renderable for ChildrenRenderer<T>
 where
-    T: Into<VNode<COMP>>,
+    T: Into<VNode>,
 {
-    fn render(&self) -> Html<COMP> {
-        VList {
-            no_siblings: true,
-            children: self.iter().map(|c| c.into()).collect(),
-        }
-        .into()
+    fn render(&self) -> Html {
+        VList::new_with_children(self.iter().map(|c| c.into()).collect()).into()
     }
 }
 
@@ -306,7 +300,7 @@ where
 ///         false
 ///     }
 ///
-///     fn view(&self) -> Html<Self> {
+///     fn view(&self) -> Html {
 ///         html! {
 ///             <input ref=self.node_ref.clone() type="text" />
 ///         }
@@ -333,13 +327,13 @@ impl NodeRef {
 }
 
 /// Trait for rendering virtual DOM elements
-pub trait Renderable<COMP: Component> {
+pub trait Renderable {
     /// Called by rendering loop.
-    fn render(&self) -> Html<COMP>;
+    fn render(&self) -> Html;
 }
 
-impl<COMP: Component> Renderable<COMP> for COMP {
-    fn render(&self) -> Html<COMP> {
+impl<COMP: Component> Renderable for COMP {
+    fn render(&self) -> Html {
         self.view()
     }
 }
@@ -386,61 +380,37 @@ where
         }
     }
 
-    /// This method sends batch of messages back to the component's loop when the
-    /// returned callback is called.
-    pub fn send_back_batch<F, IN>(&mut self, function: F) -> Callback<IN>
+    /// This method creates a `Callback` which will send a batch of messages back to the linked
+    /// component's update method when called.
+    pub fn batch_callback<F, IN>(&self, function: F) -> Callback<IN>
     where
         F: Fn(IN) -> Vec<COMP::Message> + 'static,
     {
         let scope = self.scope.clone();
         let closure = move |input| {
             let messages = function(input);
-            scope.clone().send_message_batch(messages);
+            scope.send_message_batch(messages);
         };
         closure.into()
     }
 
-    /// This method sends messages back to the component's loop when the returned callback is called.
-    pub fn send_back<F, IN>(&mut self, function: F) -> Callback<IN>
+    /// This method creates a `Callback` which will send a message to the linked component's
+    /// update method when invoked.
+    pub fn callback<F, IN>(&self, function: F) -> Callback<IN>
     where
         F: Fn(IN) -> COMP::Message + 'static,
     {
         let scope = self.scope.clone();
         let closure = move |input| {
             let output = function(input);
-            scope.clone().send_message(output);
+            scope.send_message(output);
         };
         closure.into()
     }
 
-    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi"), not(cargo_web)))]
-    /// This method processes a Future that returns a message and sends it back to the component's
-    /// loop.
-    ///
-    /// # Panics
-    /// If the future panics, then the promise will not resolve, and will leak.
-    pub fn send_future<F>(&self, future: F)
-    where
-        F: Future<Output = COMP::Message> + 'static,
-    {
-        use wasm_bindgen::JsValue;
-        use wasm_bindgen_futures::future_to_promise;
-
-        let mut scope = self.scope.clone();
-
-        let js_future = async {
-            let message: COMP::Message = future.await;
-            // Force movement of the cloned scope into the async block.
-            let scope_send = move || scope.send_message(message);
-            scope_send();
-            Ok(JsValue::NULL)
-        };
-        future_to_promise(js_future);
-    }
-
     /// This method sends a message to this component to be processed immediately after the
     /// component has been updated and/or rendered.
-    pub fn send_self(&mut self, msg: COMP::Message) {
+    pub fn send_message(&mut self, msg: COMP::Message) {
         self.scope.send_message(msg);
     }
 
@@ -449,7 +419,7 @@ where
     ///
     /// All messages will first be processed by `update`, and if _any_ of them return `true`,
     /// then re-render will occur.
-    pub fn send_self_batch(&mut self, msgs: Vec<COMP::Message>) {
+    pub fn send_message_batch(&mut self, msgs: Vec<COMP::Message>) {
         self.scope.send_message_batch(msgs)
     }
 }
