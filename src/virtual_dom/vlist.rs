@@ -4,7 +4,7 @@ use std::ops::{Deref, DerefMut};
 use stdweb::web::{Element, Node};
 
 /// This struct represents a fragment of the Virtual DOM tree.
-#[derive(Debug, PartialEq, Default)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct VList {
     /// The list of children nodes.
     pub children: Vec<VNode>,
@@ -113,5 +113,47 @@ impl VDiff for VList {
             }
         }
         previous_sibling
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{html, Component, ComponentLink, Html, ShouldRender};
+    #[cfg(feature = "wasm_test")]
+    use wasm_bindgen_test::{wasm_bindgen_test as test, wasm_bindgen_test_configure};
+
+    #[cfg(feature = "wasm_test")]
+    wasm_bindgen_test_configure!(run_in_browser);
+
+    struct Comp;
+
+    impl Component for Comp {
+        type Message = ();
+        type Properties = ();
+
+        fn create(_: Self::Properties, _: ComponentLink<Self>) -> Self {
+            Comp
+        }
+
+        fn update(&mut self, _: Self::Message) -> ShouldRender {
+            unimplemented!();
+        }
+
+        fn view(&self) -> Html {
+            unimplemented!();
+        }
+    }
+
+    #[test]
+    fn check_fragments() {
+        let fragment = html! {
+            <>
+            </>
+        };
+        html! {
+            <div>
+                { fragment }
+            </div>
+        };
     }
 }

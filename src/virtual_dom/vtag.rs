@@ -8,6 +8,7 @@ use log::warn;
 use std::borrow::Cow;
 use std::cmp::PartialEq;
 use std::fmt;
+use std::rc::Rc;
 use stdweb::unstable::TryFrom;
 use stdweb::web::html_element::InputElement;
 use stdweb::web::html_element::TextAreaElement;
@@ -56,6 +57,24 @@ pub struct VTag {
     captured: Vec<EventListenerHandle>,
 }
 
+impl Clone for VTag {
+    fn clone(&self) -> Self {
+        VTag {
+            tag: self.tag.clone(),
+            reference: None,
+            listeners: self.listeners.clone(),
+            attributes: self.attributes.clone(),
+            children: self.children.clone(),
+            classes: self.classes.clone(),
+            value: self.value.clone(),
+            kind: self.kind.clone(),
+            checked: self.checked,
+            node_ref: self.node_ref.clone(),
+            captured: Vec::new(),
+        }
+    }
+}
+
 impl VTag {
     /// Creates a new `VTag` instance with `tag` name (cannot be changed later in DOM).
     pub fn new<S: Into<Cow<'static, str>>>(tag: S) -> Self {
@@ -94,29 +113,23 @@ impl VTag {
     }
 
     /// Adds a single class to this virtual node. Actually it will set by
-    /// [Element.classList.add](https://developer.mozilla.org/en-US/docs/Web/API/Element/classList)
+    /// [Element.setAttribute](https://developer.mozilla.org/en-US/docs/Web/API/Element/setAttribute)
     /// call later.
     pub fn add_class(&mut self, class: &str) {
-        let class = class.trim();
-        if !class.is_empty() {
+        self.classes.push(class);
+    }
+
+    /// Adds multiple classes to this virtual node. Actually it will set by
+    /// [Element.setAttribute](https://developer.mozilla.org/en-US/docs/Web/API/Element/setAttribute)
+    /// call later.
+    pub fn add_classes(&mut self, classes: Vec<&str>) {
+        for class in classes {
             self.classes.push(class);
         }
     }
 
-    /// Adds multiple classes to this virtual node. Actually it will set by
-    /// [Element.classList.add](https://developer.mozilla.org/en-US/docs/Web/API/Element/classList)
-    /// call later.
-    pub fn add_classes(&mut self, classes: Vec<&str>) {
-        for class in classes {
-            let class = class.trim();
-            if !class.is_empty() {
-                self.classes.push(class);
-            }
-        }
-    }
-
     /// Add classes to this virtual node. Actually it will set by
-    /// [Element.classList.add](https://developer.mozilla.org/en-US/docs/Web/API/Element/classList)
+    /// [Element.setAttribute](https://developer.mozilla.org/en-US/docs/Web/API/Element/setAttribute)
     /// call later.
     pub fn set_classes(&mut self, classes: impl Into<Classes>) {
         self.classes = classes.into();
@@ -161,51 +174,33 @@ impl VTag {
     /// Adds new listener to the node.
     /// It's boxed because we want to keep it in a single list.
     /// Later `Listener::attach` will attach an actual listener to a DOM node.
-    pub fn add_listener(&mut self, listener: Box<dyn Listener>) {
+    pub fn add_listener(&mut self, listener: Rc<dyn Listener>) {
         self.listeners.push(listener);
     }
 
     /// Adds new listeners to the node.
     /// They are boxed because we want to keep them in a single list.
     /// Later `Listener::attach` will attach an actual listener to a DOM node.
-    pub fn add_listeners(&mut self, listeners: Vec<Box<dyn Listener>>) {
+    pub fn add_listeners(&mut self, listeners: Vec<Rc<dyn Listener>>) {
         for listener in listeners {
             self.listeners.push(listener);
         }
     }
 
-    /// Compute differences between the ancestor and determine patch changes.
+    /// If there is no ancestor or the classes, or the order, differs from the ancestor:
+    /// - Returns the classes of self separated by spaces.
     ///
-    /// If there is an ancestor:
-    /// - add the classes that are in self but NOT in ancestor.
-    /// - remove the classes that are in ancestor but NOT in self.
-    /// - items that are the same stay the same.
-    ///
-    /// Otherwise just add everything.
-    fn diff_classes<'a>(
-        &'a self,
-        ancestor: &'a Option<Box<Self>>,
-    ) -> impl Iterator<Item = Patch<&'a str, ()>> + 'a {
-        let to_add = {
-            let all_or_nothing = not(ancestor)
-                .iter()
-                .flat_map(move |_| self.classes.set.iter())
-                .map(|class| Patch::Add(&**class, ()));
-
-            let ancestor_difference = ancestor
-                .iter()
-                .flat_map(move |ancestor| self.classes.set.difference(&ancestor.classes.set))
-                .map(|class| Patch::Add(&**class, ()));
-
-            all_or_nothing.chain(ancestor_difference)
-        };
-
-        let to_remove = ancestor
-            .iter()
-            .flat_map(move |ancestor| ancestor.classes.set.difference(&self.classes.set))
-            .map(|class| Patch::Remove(&**class));
-
-        to_add.chain(to_remove)
+    /// Otherwise None is returned.
+    fn diff_classes<'a>(&'a self, ancestor: &'a Option<Box<Self>>) -> Option<String> {
+        if ancestor
+            .as_ref()
+            .map(|ancestor| self.classes.ne(&ancestor.classes))
+            .unwrap_or(true)
+        {
+            Some(self.classes.to_string())
+        } else {
+            None
+        }
     }
 
     /// Similar to diff_classes except for attributes.
@@ -281,27 +276,23 @@ impl VTag {
         let element = self.reference.as_ref().expect("element expected");
 
         // Update parameters
-        let changes = self.diff_classes(ancestor);
-        for change in changes {
-            let list = element.class_list();
-            match change {
-                Patch::Add(class, _) | Patch::Replace(class, _) => {
-                    list.add(class).expect("can't add a class");
-                }
-                Patch::Remove(class) => {
-                    list.remove(class).expect("can't remove a class");
-                }
-            }
+        let class_str = self.diff_classes(ancestor);
+        if let Some(class_str) = class_str {
+            element
+                .set_attribute("class", &class_str)
+                .expect("could not set class");
         }
 
         let changes = self.diff_attributes(ancestor);
         for change in changes {
             match change {
                 Patch::Add(key, value) | Patch::Replace(key, value) => {
-                    set_attribute(element, &key, &value);
+                    element
+                        .set_attribute(&key, &value)
+                        .expect("invalid attribute key");
                 }
                 Patch::Remove(key) => {
-                    remove_attribute(element, &key);
+                    element.remove_attribute(&key);
                 }
             }
         }
@@ -437,7 +428,7 @@ impl VDiff for VTag {
         self.apply_diffs(&ancestor);
 
         // Every render it removes all listeners and attach it back later
-        // TODO Compare references of handler to do listeners update better
+        // TODO(#943): Compare references of handler to do listeners update better
         if let Some(ancestor) = ancestor.as_mut() {
             for handle in ancestor.captured.drain(..) {
                 handle.remove();
@@ -467,17 +458,6 @@ impl fmt::Debug for VTag {
     }
 }
 
-/// `stdweb` doesn't have methods to work with attributes now.
-/// this is [workaround](https://github.com/koute/stdweb/issues/16#issuecomment-325195854)
-fn set_attribute(element: &Element, name: &str, value: &str) {
-    js!( @(no_return) @{element}.setAttribute( @{name}, @{value} ); );
-}
-
-/// Removes attribute from a element by name.
-fn remove_attribute(element: &Element, name: &str) {
-    js!( @(no_return) @{element}.removeAttribute( @{name} ); );
-}
-
 /// Set `checked` value for the `InputElement`.
 fn set_checked(input: &InputElement, value: bool) {
     js!( @(no_return) @{input}.checked = @{value}; );
@@ -496,17 +476,8 @@ impl PartialEq for VTag {
                 .map(|l| l.kind())
                 .eq(other.listeners.iter().map(|l| l.kind()))
             && self.attributes == other.attributes
-            && self.classes.set.len() == other.classes.set.len()
-            && self.classes.set.iter().eq(other.classes.set.iter())
+            && self.classes.eq(&other.classes)
             && self.children == other.children
-    }
-}
-
-pub(crate) fn not<T>(option: &Option<T>) -> &Option<()> {
-    if option.is_some() {
-        &None
-    } else {
-        &Some(())
     }
 }
 
@@ -522,5 +493,508 @@ where
 {
     fn transform(from: &'a T) -> T {
         from.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{html, Component, ComponentLink, Html, ShouldRender};
+    use stdweb::web::{document, IElement};
+    #[cfg(feature = "wasm_test")]
+    use wasm_bindgen_test::{wasm_bindgen_test as test, wasm_bindgen_test_configure};
+
+    #[cfg(feature = "wasm_test")]
+    wasm_bindgen_test_configure!(run_in_browser);
+
+    struct Comp;
+
+    impl Component for Comp {
+        type Message = ();
+        type Properties = ();
+
+        fn create(_: Self::Properties, _: ComponentLink<Self>) -> Self {
+            Comp
+        }
+
+        fn update(&mut self, _: Self::Message) -> ShouldRender {
+            unimplemented!();
+        }
+
+        fn view(&self) -> Html {
+            unimplemented!();
+        }
+    }
+
+    struct CompInt;
+
+    impl Component for CompInt {
+        type Message = u32;
+        type Properties = ();
+
+        fn create(_: Self::Properties, _: ComponentLink<Self>) -> Self {
+            CompInt
+        }
+
+        fn update(&mut self, _: Self::Message) -> ShouldRender {
+            unimplemented!();
+        }
+
+        fn view(&self) -> Html {
+            unimplemented!();
+        }
+    }
+
+    struct CompBool;
+
+    impl Component for CompBool {
+        type Message = bool;
+        type Properties = ();
+
+        fn create(_: Self::Properties, _: ComponentLink<Self>) -> Self {
+            CompBool
+        }
+
+        fn update(&mut self, _: Self::Message) -> ShouldRender {
+            unimplemented!();
+        }
+
+        fn view(&self) -> Html {
+            unimplemented!();
+        }
+    }
+
+    #[test]
+    fn it_compares_tags() {
+        let a = html! {
+            <div></div>
+        };
+
+        let b = html! {
+            <div></div>
+        };
+
+        let c = html! {
+            <p></p>
+        };
+
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn it_compares_text() {
+        let a = html! {
+            <div>{ "correct" }</div>
+        };
+
+        let b = html! {
+            <div>{ "correct" }</div>
+        };
+
+        let c = html! {
+            <div>{ "incorrect" }</div>
+        };
+
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn it_compares_attributes() {
+        let a = html! {
+            <div a="test"></div>
+        };
+
+        let b = html! {
+            <div a="test"></div>
+        };
+
+        let c = html! {
+            <div a="fail"></div>
+        };
+
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn it_compares_children() {
+        let a = html! {
+            <div>
+                <p></p>
+            </div>
+        };
+
+        let b = html! {
+            <div>
+                <p></p>
+            </div>
+        };
+
+        let c = html! {
+            <div>
+                <span></span>
+            </div>
+        };
+
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn it_compares_classes() {
+        let a = html! {
+            <div class="test"></div>
+        };
+
+        let b = html! {
+            <div class="test"></div>
+        };
+
+        let c = html! {
+            <div class="fail"></div>
+        };
+
+        let d = html! {
+            <div class=format!("fail")></div>
+        };
+
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+        assert_eq!(c, d);
+    }
+
+    #[test]
+    fn classes_from_local_variables() {
+        let a = html! {
+            <div class=("class-1", "class-2")></div>
+        };
+
+        let class_2 = "class-2";
+        let b = html! {
+            <div class=("class-1", class_2)></div>
+        };
+
+        let class_2_fmt = format!("class-{}", 2);
+        let c = html! {
+            <div class=("class-1", class_2_fmt)></div>
+        };
+
+        assert_eq!(a, b);
+        assert_eq!(a, c);
+    }
+
+    #[test]
+    fn supports_multiple_classes_string() {
+        let a = html! {
+            <div class="class-1 class-2   class-3"></div>
+        };
+
+        let b = html! {
+            <div class="class-2 class-3 class-1"></div>
+        };
+
+        assert_ne!(a, b);
+
+        if let VNode::VTag(vtag) = a {
+            println!("{:?}", vtag.classes);
+            assert!(vtag.classes.contains("class-1"));
+            assert!(vtag.classes.contains("class-2"));
+            assert!(vtag.classes.contains("class-3"));
+        } else {
+            panic!("vtag expected");
+        }
+    }
+
+    #[test]
+    fn supports_multiple_classes_vec() {
+        let mut classes = vec!["class-1"];
+        classes.push("class-2");
+        let a = html! {
+            <div class=classes></div>
+        };
+
+        if let VNode::VTag(vtag) = a {
+            println!("{:?}", vtag.classes);
+            assert!(vtag.classes.contains("class-1"));
+            assert!(vtag.classes.contains("class-2"));
+            assert!(!vtag.classes.contains("class-3"));
+        } else {
+            panic!("vtag expected");
+        }
+    }
+
+    #[test]
+    fn filter_empty_string_classes_vec() {
+        let mut classes = vec![""];
+        classes.push("class-2");
+        let a = html! { <div class=vec![""]></div> };
+        let b = html! { <div class=("")></div> };
+        let c = html! { <div class=""></div> };
+
+        if let VNode::VTag(vtag) = a {
+            assert!(vtag.classes.is_empty());
+        } else {
+            panic!("vtag expected");
+        }
+
+        if let VNode::VTag(vtag) = b {
+            assert!(vtag.classes.is_empty());
+        } else {
+            panic!("vtag expected");
+        }
+
+        if let VNode::VTag(vtag) = c {
+            assert!(vtag.classes.is_empty());
+        } else {
+            panic!("vtag expected");
+        }
+    }
+
+    fn assert_vtag(node: &mut VNode) -> &mut VTag {
+        if let VNode::VTag(vtag) = node {
+            return vtag;
+        }
+        panic!("should be vtag");
+    }
+
+    fn assert_namespace(vtag: &VTag, namespace: &'static str) {
+        assert_eq!(
+            vtag.reference.as_ref().unwrap().namespace_uri().unwrap(),
+            namespace
+        );
+    }
+
+    #[test]
+    fn supports_svg() {
+        let div_el = document().create_element("div").unwrap();
+        let svg_el = document().create_element_ns(SVG_NAMESPACE, "svg").unwrap();
+
+        let mut g_node = html! { <g></g> };
+        let path_node = html! { <path></path> };
+        let mut svg_node = html! { <svg>{path_node}</svg> };
+
+        let svg_tag = assert_vtag(&mut svg_node);
+        svg_tag.apply(&div_el, None, None);
+        assert_namespace(svg_tag, SVG_NAMESPACE);
+        let path_tag = assert_vtag(svg_tag.children.get_mut(0).unwrap());
+        assert_namespace(path_tag, SVG_NAMESPACE);
+
+        let g_tag = assert_vtag(&mut g_node);
+        g_tag.apply(&div_el, None, None);
+        assert_namespace(g_tag, HTML_NAMESPACE);
+        g_tag.reference = None;
+
+        g_tag.apply(&svg_el, None, None);
+        assert_namespace(g_tag, SVG_NAMESPACE);
+    }
+
+    #[test]
+    fn keeps_order_of_classes() {
+        let a = html! {
+            <div class="class-1 class-2   class-3",></div>
+        };
+
+        if let VNode::VTag(vtag) = a {
+            println!("{:?}", vtag.classes);
+            assert_eq!(vtag.classes.to_string(), "class-1 class-2 class-3");
+        }
+    }
+
+    #[test]
+    fn it_compares_values() {
+        let a = html! {
+            <input value="test"/>
+        };
+
+        let b = html! {
+            <input value="test"/>
+        };
+
+        let c = html! {
+            <input value="fail"/>
+        };
+
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn it_compares_kinds() {
+        let a = html! {
+            <input type="text"/>
+        };
+
+        let b = html! {
+            <input type="text"/>
+        };
+
+        let c = html! {
+            <input type="hidden"/>
+        };
+
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn it_compares_checked() {
+        let a = html! {
+            <input type="checkbox" checked=false />
+        };
+
+        let b = html! {
+            <input type="checkbox" checked=false />
+        };
+
+        let c = html! {
+            <input type="checkbox" checked=true />
+        };
+
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn it_allows_aria_attributes() {
+        let a = html! {
+            <p aria-controls="it-works">
+                <a class="btn btn-primary"
+                   data-toggle="collapse"
+                   href="#collapseExample"
+                   role="button"
+                   aria-expanded="false"
+                   aria-controls="collapseExample">
+                    { "Link with href" }
+                </a>
+                <button class="btn btn-primary"
+                        type="button"
+                        data-toggle="collapse"
+                        data-target="#collapseExample"
+                        aria-expanded="false"
+                        aria-controls="collapseExample">
+                    { "Button with data-target" }
+                </button>
+                <div own-attribute-with-multiple-parts="works" />
+            </p>
+        };
+        if let VNode::VTag(vtag) = a {
+            assert!(vtag.attributes.contains_key("aria-controls"));
+            assert_eq!(
+                vtag.attributes.get("aria-controls"),
+                Some(&"it-works".into())
+            );
+        } else {
+            panic!("vtag expected");
+        }
+    }
+
+    #[test]
+    fn it_checks_mixed_closing_tags() {
+        let a = html! { <div> <div/>      </div> };
+        let b = html! { <div> <div></div> </div> };
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn it_checks_misleading_gt() {
+        html! { <div data-val=<u32 as Default>::default()></div> };
+        html! { <div data-val=Box::<u32>::default()></div> };
+
+        html! { <div><a data-val=<u32 as Default>::default() /> </div> };
+        html! { <div><a data-val=Box::<u32>::default() /></div> };
+    }
+
+    #[test]
+    fn swap_order_of_classes() {
+        let parent = document().create_element("div").unwrap();
+        document().body().unwrap().append_child(&parent);
+
+        let mut elem = html! { <div class=("class-1", "class-2", "class-3")></div> };
+        elem.apply(&parent, None, None);
+
+        let vtag = if let VNode::VTag(vtag) = elem {
+            vtag
+        } else {
+            panic!("should be vtag")
+        };
+
+        let expected = "class-1 class-2 class-3";
+        assert_eq!(vtag.classes.to_string(), expected);
+        assert_eq!(
+            vtag.reference
+                .as_ref()
+                .unwrap()
+                .get_attribute("class")
+                .unwrap(),
+            expected
+        );
+
+        let ancestor = vtag;
+        let elem = html! { <div class=("class-3", "class-2", "class-1")></div> };
+        let mut vtag = if let VNode::VTag(vtag) = elem {
+            vtag
+        } else {
+            panic!("should be vtag")
+        };
+        vtag.apply(&parent, None, Some(VNode::VTag(ancestor)));
+
+        let expected = "class-3 class-2 class-1";
+        assert_eq!(vtag.classes.to_string(), expected);
+        assert_eq!(
+            vtag.reference
+                .as_ref()
+                .unwrap()
+                .get_attribute("class")
+                .unwrap(),
+            expected
+        );
+    }
+
+    #[test]
+    fn add_class_to_the_middle() {
+        let parent = document().create_element("div").unwrap();
+        document().body().unwrap().append_child(&parent);
+
+        let mut elem = html! { <div class=("class-1", "class-3")></div> };
+        elem.apply(&parent, None, None);
+
+        let vtag = if let VNode::VTag(vtag) = elem {
+            vtag
+        } else {
+            panic!("should be vtag")
+        };
+
+        let expected = "class-1 class-3";
+        assert_eq!(vtag.classes.to_string(), expected);
+        assert_eq!(
+            vtag.reference
+                .as_ref()
+                .unwrap()
+                .get_attribute("class")
+                .unwrap(),
+            expected
+        );
+
+        let ancestor = vtag;
+        let elem = html! { <div class=("class-1", "class-2", "class-3")></div> };
+        let mut vtag = if let VNode::VTag(vtag) = elem {
+            vtag
+        } else {
+            panic!("should be vtag")
+        };
+        vtag.apply(&parent, None, Some(VNode::VTag(ancestor)));
+
+        let expected = "class-1 class-2 class-3";
+        assert_eq!(vtag.classes.to_string(), expected);
+        assert_eq!(
+            vtag.reference
+                .as_ref()
+                .unwrap()
+                .get_attribute("class")
+                .unwrap(),
+            expected
+        );
     }
 }

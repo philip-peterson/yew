@@ -11,7 +11,10 @@ use syn::parse;
 use syn::parse::{Parse, ParseStream, Result as ParseResult};
 use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
-use syn::{Expr, Ident, Path, PathArguments, PathSegment, Token, Type, TypePath};
+use syn::{
+    AngleBracketedGenericArguments, Expr, GenericArgument, Ident, Path, PathArguments, PathSegment,
+    Token, Type, TypePath,
+};
 
 pub struct HtmlComponent {
     ty: Type,
@@ -21,11 +24,9 @@ pub struct HtmlComponent {
 
 impl PeekValue<()> for HtmlComponent {
     fn peek(cursor: Cursor) -> Option<()> {
-        let (punct, cursor) = cursor.punct()?;
-        (punct.as_char() == '<').as_option()?;
-
-        HtmlComponent::peek_type(cursor)?;
-        Some(())
+        HtmlComponentOpen::peek(cursor)
+            .or_else(|| HtmlComponentClose::peek(cursor))
+            .map(|_| ())
     }
 }
 
@@ -59,8 +60,10 @@ impl Parse for HtmlComponent {
                     "this open tag has no corresponding close tag",
                 ));
             }
-            if HtmlComponentClose::peek(input.cursor()).is_some() {
-                break;
+            if let Some(ty) = HtmlComponentClose::peek(input.cursor()) {
+                if open.ty == ty {
+                    break;
+                }
             }
 
             children.push(input.parse()?);
@@ -84,60 +87,42 @@ impl ToTokens for HtmlComponent {
             children,
         } = self;
 
-        let validate_props = if let Props::List(ListProps { props, .. }) = props {
-            let prop_ref = Ident::new("__yew_prop_ref", Span::call_site());
-            let check_props = props.iter().map(|HtmlProp { label, .. }| {
-                quote! { #prop_ref.#label; }
+        let validate_props = if let Props::List(list_props) = props {
+            let check_props = list_props.props.iter().map(|HtmlProp { label, .. }| {
+                quote! { props.#label; }
             });
 
             let check_children = if !children.is_empty() {
-                quote! { #prop_ref.children; }
+                quote! { props.children; }
             } else {
                 quote! {}
             };
 
-            // This is a hack to avoid allocating memory but still have a reference to a props
-            // struct so that attributes can be checked against it
-
-            #[cfg(has_maybe_uninit)]
-            let unallocated_prop_ref = quote! {
-                let #prop_ref: <#ty as ::yew::html::Component>::Properties = unsafe { ::std::mem::MaybeUninit::uninit().assume_init() };
-            };
-
-            #[cfg(not(has_maybe_uninit))]
-            let unallocated_prop_ref = quote! {
-                let #prop_ref: <#ty as ::yew::html::Component>::Properties = unsafe { ::std::mem::uninitialized() };
-            };
-
             quote! {
-                #unallocated_prop_ref
-                #check_children
-                #(#check_props)*
+                let _ = |props: <#ty as ::yew::html::Component>::Properties| {
+                    #check_children
+                    #(#check_props)*
+                };
             }
         } else {
             quote! {}
         };
 
         let set_children = if !children.is_empty() {
-            let children_len = children.len();
             quote! {
-                .children(::yew::html::ChildrenRenderer::new(
-                    #children_len,
-                    ::std::boxed::Box::new(move || {
-                        #[allow(unused_must_use)]
-                        || -> ::std::vec::Vec<_> {
-                            vec![#(#children.into(),)*]
-                        }
-                    }()),
-                ))
+                .children(::yew::html::ChildrenRenderer::new({
+                    let mut v = ::std::vec::Vec::new();
+                    #(v.extend(::yew::utils::NodeSeq::from(#children));)*
+                    v
+                }))
             }
         } else {
             quote! {}
         };
 
         let init_props = match props {
-            Props::List(ListProps { props, .. }) => {
-                let set_props = props.iter().map(|HtmlProp { label, value }| {
+            Props::List(list_props) => {
+                let set_props = list_props.props.iter().map(|HtmlProp { label, value }| {
                     quote_spanned! { value.span()=> .#label(
                         <::yew::virtual_dom::vcomp::VComp as ::yew::virtual_dom::Transformer<_, _>>::transform(
                             #value
@@ -152,7 +137,10 @@ impl ToTokens for HtmlComponent {
                         .build()
                 }
             }
-            Props::With(WithProps { props, .. }) => quote! { #props },
+            Props::With(with_props) => {
+                let props = &with_props.props;
+                quote! { #props }
+            }
             Props::None => quote! {
                 <<#ty as ::yew::html::Component>::Properties as ::yew::html::Properties>::builder()
                     #set_children
@@ -161,12 +149,8 @@ impl ToTokens for HtmlComponent {
         };
 
         let validate_comp = quote_spanned! { ty.span()=>
-            trait __yew_validate_comp {
-                type C: ::yew::html::Component;
-            }
-            impl __yew_validate_comp for () {
-                type C = #ty;
-            }
+            trait __yew_validate_comp: ::yew::html::Component {}
+            impl __yew_validate_comp for #ty {}
         };
 
         let node_ref = if let Some(node_ref) = props.node_ref() {
@@ -176,7 +160,8 @@ impl ToTokens for HtmlComponent {
         };
 
         tokens.extend(quote! {{
-            // Validation nevers executes at runtime
+            // These validation checks show a nice error message to the user.
+            // They do not execute at runtime
             if false {
                 #validate_comp
                 #validate_props
@@ -198,7 +183,27 @@ impl HtmlComponent {
         Some(cursor)
     }
 
-    fn peek_type(mut cursor: Cursor) -> Option<Type> {
+    fn path_arguments(cursor: Cursor) -> Option<(PathArguments, Cursor)> {
+        let (punct, cursor) = cursor.punct()?;
+        (punct.as_char() == '<').as_option()?;
+
+        let (ty, cursor) = Self::peek_type(cursor)?;
+
+        let (punct, cursor) = cursor.punct()?;
+        (punct.as_char() == '>').as_option()?;
+
+        Some((
+            PathArguments::AngleBracketed(AngleBracketedGenericArguments {
+                colon2_token: None,
+                lt_token: Token![<](Span::call_site()),
+                args: vec![GenericArgument::Type(ty)].into_iter().collect(),
+                gt_token: Token![>](Span::call_site()),
+            }),
+            cursor,
+        ))
+    }
+
+    fn peek_type(mut cursor: Cursor) -> Option<(Type, Cursor)> {
         let mut colons_optional = true;
         let mut last_ident = None;
         let mut leading_colon = None;
@@ -218,10 +223,14 @@ impl HtmlComponent {
             if let Some((ident, c)) = post_colons_cursor.ident() {
                 cursor = c;
                 last_ident = Some(ident.clone());
-                segments.push(PathSegment {
-                    ident,
-                    arguments: PathArguments::None,
-                });
+                let arguments = if let Some((args, c)) = Self::path_arguments(cursor) {
+                    cursor = c;
+                    args
+                } else {
+                    PathArguments::None
+                };
+
+                segments.push(PathSegment { ident, arguments });
             } else {
                 break;
             }
@@ -234,13 +243,16 @@ impl HtmlComponent {
         type_str.is_ascii().as_option()?;
         type_str.bytes().next()?.is_ascii_uppercase().as_option()?;
 
-        Some(Type::Path(TypePath {
-            qself: None,
-            path: Path {
-                leading_colon,
-                segments,
-            },
-        }))
+        Some((
+            Type::Path(TypePath {
+                qself: None,
+                path: Path {
+                    leading_colon,
+                    segments,
+                },
+            }),
+            cursor,
+        ))
     }
 }
 
@@ -256,7 +268,8 @@ impl PeekValue<Type> for HtmlComponentOpen {
     fn peek(cursor: Cursor) -> Option<Type> {
         let (punct, cursor) = cursor.punct()?;
         (punct.as_char() == '<').as_option()?;
-        HtmlComponent::peek_type(cursor)
+        let (typ, _) = HtmlComponent::peek_type(cursor)?;
+        Some(typ)
     }
 }
 
@@ -301,7 +314,12 @@ impl PeekValue<Type> for HtmlComponentClose {
         let (punct, cursor) = cursor.punct()?;
         (punct.as_char() == '/').as_option()?;
 
-        HtmlComponent::peek_type(cursor)
+        let (typ, cursor) = HtmlComponent::peek_type(cursor)?;
+
+        let (punct, _) = cursor.punct()?;
+        (punct.as_char() == '>').as_option()?;
+
+        Some(typ)
     }
 }
 impl Parse for HtmlComponentClose {
@@ -328,16 +346,16 @@ enum PropType {
 }
 
 enum Props {
-    List(ListProps),
-    With(WithProps),
+    List(Box<ListProps>),
+    With(Box<WithProps>),
     None,
 }
 
 impl Props {
     fn node_ref(&self) -> Option<&Expr> {
         match self {
-            Props::List(ListProps { node_ref, .. }) => node_ref.as_ref(),
-            Props::With(WithProps { node_ref, .. }) => node_ref.as_ref(),
+            Props::List(list_props) => list_props.node_ref.as_ref(),
+            Props::With(with_props) => with_props.node_ref.as_ref(),
             Props::None => None,
         }
     }
@@ -346,7 +364,7 @@ impl Props {
 impl PeekValue<PropType> for Props {
     fn peek(cursor: Cursor) -> Option<PropType> {
         let (ident, _) = cursor.ident()?;
-        let prop_type = if ident.to_string() == "with" {
+        let prop_type = if ident == "with" {
             PropType::With
         } else {
             PropType::List
@@ -359,8 +377,8 @@ impl PeekValue<PropType> for Props {
 impl Parse for Props {
     fn parse(input: ParseStream) -> ParseResult<Self> {
         match Props::peek(input.cursor()) {
-            Some(PropType::List) => input.parse().map(Props::List),
-            Some(PropType::With) => input.parse().map(Props::With),
+            Some(PropType::List) => input.parse().map(|l| Props::List(Box::new(l))),
+            Some(PropType::With) => input.parse().map(|w| Props::With(Box::new(w))),
             None => Ok(Props::None),
         }
     }
@@ -379,7 +397,7 @@ impl Parse for ListProps {
         }
 
         let ref_position = props.iter().position(|p| p.label.to_string() == "ref");
-        let node_ref = ref_position.and_then(|i| Some(props.remove(i).value));
+        let node_ref = ref_position.map(|i| props.remove(i).value);
         for prop in &props {
             if prop.label.to_string() == "ref" {
                 return Err(syn::Error::new_spanned(&prop.label, "too many refs set"));
@@ -420,7 +438,7 @@ struct WithProps {
 impl Parse for WithProps {
     fn parse(input: ParseStream) -> ParseResult<Self> {
         let with = input.parse::<Ident>()?;
-        if with.to_string() != "with" {
+        if with != "with" {
             return Err(input.error("expected to find `with` token"));
         }
         let props = input.parse::<Ident>()?;

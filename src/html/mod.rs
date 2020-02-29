@@ -51,7 +51,7 @@ pub trait Component: Sized + 'static {
     /// Called by rendering loop.
     fn view(&self) -> Html;
     /// Called for finalization on the final point of the component's lifetime.
-    fn destroy(&mut self) {} // TODO Replace with `Drop`
+    fn destroy(&mut self) {} // TODO(#941): Replace with `Drop`
 }
 
 /// A type which expected as a result of `view` function implementation.
@@ -65,7 +65,7 @@ pub type Html = VNode;
 /// In this example, the `Wrapper` component is used to wrap other elements.
 /// ```
 ///# use yew::{Children, Html, Properties, Component, ComponentLink, html};
-///# #[derive(Properties)]
+///# #[derive(Clone, Properties)]
 ///# struct WrapperProps {
 ///#     children: Children,
 ///# }
@@ -93,7 +93,7 @@ pub type Html = VNode;
 /// children property can be used to render the wrapped elements.
 /// ```
 ///# use yew::{Children, Html, Properties, Renderable, Component, ComponentLink, html};
-/// #[derive(Properties)]
+/// #[derive(Clone, Properties)]
 /// struct WrapperProps {
 ///     children: Children,
 /// }
@@ -125,7 +125,7 @@ pub type Children = ChildrenRenderer<Html>;
 /// ```
 ///# use yew::{html, Component, Renderable, Html, ComponentLink, ChildrenWithProps, Properties};
 ///#
-///# #[derive(Properties)]
+///# #[derive(Clone, Properties)]
 ///# struct ListProps {
 ///#     children: ChildrenWithProps<ListItem>,
 ///# }
@@ -137,7 +137,7 @@ pub type Children = ChildrenRenderer<Html>;
 ///#     fn update(&mut self, msg: Self::Message) -> bool {unimplemented!()}
 ///#     fn view(&self) -> Html {unimplemented!()}
 ///# }
-///# #[derive(Properties)]
+///# #[derive(Clone, Properties)]
 ///# struct ListItemProps {
 ///#     value: String
 ///# }
@@ -167,7 +167,7 @@ pub type Children = ChildrenRenderer<Html>;
 /// ```
 ///# use yew::{html, Component, Html, ChildrenWithProps, ComponentLink, Properties};
 ///#
-/// #[derive(Properties)]
+/// #[derive(Clone, Properties)]
 /// struct ListProps {
 ///   children: ChildrenWithProps<ListItem>,
 /// }
@@ -189,7 +189,7 @@ pub type Children = ChildrenRenderer<Html>;
 ///     }
 /// }
 ///#
-///# #[derive(Properties)]
+///# #[derive(Clone, Properties)]
 ///# struct ListItemProps {
 ///#     value: String
 ///# }
@@ -206,30 +206,39 @@ pub type Children = ChildrenRenderer<Html>;
 pub type ChildrenWithProps<CHILD> = ChildrenRenderer<VChild<CHILD>>;
 
 /// A type used for rendering children html.
+#[derive(Clone)]
 pub struct ChildrenRenderer<T> {
-    len: usize,
-    boxed_render: Box<dyn Fn() -> Vec<T>>,
+    children: Vec<T>,
 }
 
-impl<T> ChildrenRenderer<T> {
+impl<T: PartialEq> PartialEq for ChildrenRenderer<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.children == other.children
+    }
+}
+
+impl<T> ChildrenRenderer<T>
+where
+    T: Clone + Into<VNode>,
+{
     /// Create children
-    pub fn new(len: usize, boxed_render: Box<dyn Fn() -> Vec<T>>) -> Self {
-        Self { len, boxed_render }
+    pub fn new(children: Vec<T>) -> Self {
+        Self { children }
     }
 
     /// Children list is empty
     pub fn is_empty(&self) -> bool {
-        self.len == 0
+        self.children.is_empty()
     }
 
     /// Number of children elements
     pub fn len(&self) -> usize {
-        self.len
+        self.children.len()
     }
 
     /// Build children components and return `Vec`
     pub fn to_vec(&self) -> Vec<T> {
-        (&self.boxed_render)()
+        self.children.clone()
     }
 
     /// Render children components and return `Iterator`
@@ -240,13 +249,8 @@ impl<T> ChildrenRenderer<T> {
 
 impl<T> Default for ChildrenRenderer<T> {
     fn default() -> Self {
-        // False positive: https://github.com/rust-lang/rust-clippy/issues/4002
-        #[allow(clippy::redundant_closure)]
-        let boxed_render = Box::new(|| Vec::new());
-
         Self {
-            len: 0,
-            boxed_render,
+            children: Vec::new(),
         }
     }
 }
@@ -259,7 +263,7 @@ impl<T> fmt::Debug for ChildrenRenderer<T> {
 
 impl<T> Renderable for ChildrenRenderer<T>
 where
-    T: Into<VNode>,
+    T: Clone + Into<VNode>,
 {
     fn render(&self) -> Html {
         VList::new_with_children(self.iter().map(|c| c.into()).collect()).into()
@@ -290,7 +294,7 @@ where
 ///     }
 ///
 ///     fn mounted(&mut self) -> ShouldRender {
-///         if let Some(input) = self.node_ref.try_into::<InputElement>() {
+///         if let Some(input) = self.node_ref.cast::<InputElement>() {
 ///             input.focus();
 ///         }
 ///         false
@@ -307,22 +311,34 @@ where
 ///     }
 /// }
 #[derive(PartialEq, Debug, Default, Clone)]
-pub struct NodeRef(Rc<RefCell<Option<Node>>>);
+pub struct NodeRef(Rc<RefCell<NodeRefInner>>);
+
+#[derive(PartialEq, Debug, Default, Clone)]
+struct NodeRefInner {
+    node: Option<Node>,
+    link: Option<NodeRef>,
+}
 
 impl NodeRef {
     /// Get the wrapped Node reference if it exists
     pub fn get(&self) -> Option<Node> {
-        self.0.borrow().clone()
+        let inner = self.0.borrow();
+        inner.node.clone().or_else(|| inner.link.as_ref()?.get())
     }
 
     /// Try converting the node reference into another form
-    pub fn try_into<INTO: TryFrom<Node>>(&self) -> Option<INTO> {
+    pub fn cast<INTO: TryFrom<Node>>(&self) -> Option<INTO> {
         self.get().and_then(|node| INTO::try_from(node).ok())
     }
 
     /// Place a Node in a reference for later use
     pub(crate) fn set(&self, node: Option<Node>) {
-        *self.0.borrow_mut() = node;
+        self.0.borrow_mut().node = node;
+    }
+
+    /// Link a downstream `NodeRef`
+    pub(crate) fn link(&self, node_ref: Self) {
+        self.0.borrow_mut().link = Some(node_ref);
     }
 }
 
@@ -339,7 +355,7 @@ impl<COMP: Component> Renderable for COMP {
 }
 
 /// Trait for building properties for a component
-pub trait Properties {
+pub trait Properties: Clone {
     /// Builder that will be used to construct properties
     type Builder;
 
@@ -410,7 +426,7 @@ where
 
     /// This method sends a message to this component to be processed immediately after the
     /// component has been updated and/or rendered.
-    pub fn send_message(&mut self, msg: COMP::Message) {
+    pub fn send_message(&self, msg: COMP::Message) {
         self.scope.send_message(msg);
     }
 
@@ -419,7 +435,7 @@ where
     ///
     /// All messages will first be processed by `update`, and if _any_ of them return `true`,
     /// then re-render will occur.
-    pub fn send_message_batch(&mut self, msgs: Vec<COMP::Message>) {
+    pub fn send_message_batch(&self, msgs: Vec<COMP::Message>) {
         self.scope.send_message_batch(msgs)
     }
 }

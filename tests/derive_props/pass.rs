@@ -5,8 +5,8 @@ use yew::prelude::*;
 mod t1 {
     use super::*;
 
-    #[derive(Properties)]
-    pub struct Props<T: Default> {
+    #[derive(Clone, Properties)]
+    pub struct Props<T: Clone + Default> {
         value: T,
     }
 
@@ -19,9 +19,10 @@ mod t1 {
 mod t2 {
     use super::*;
 
+    #[derive(Clone)]
     struct Value;
-    #[derive(Properties)]
-    pub struct Props<T> {
+    #[derive(Clone, Properties)]
+    pub struct Props<T: Clone> {
         #[props(required)]
         value: T,
     }
@@ -34,7 +35,7 @@ mod t2 {
 mod t3 {
     use super::*;
 
-    #[derive(Properties)]
+    #[derive(Clone, Properties)]
     pub struct Props {
         #[props(required)]
         b: i32,
@@ -50,10 +51,10 @@ mod t3 {
 mod t4 {
     use super::*;
 
-    #[derive(Properties)]
+    #[derive(Clone, Properties)]
     pub struct Props<T>
     where
-        T: Default,
+        T: Clone + Default,
     {
         value: T,
     }
@@ -67,8 +68,8 @@ mod t4 {
 mod t5 {
     use super::*;
 
-    #[derive(Properties)]
-    pub struct Props<'a, T: Default + 'a> {
+    #[derive(Clone, Properties)]
+    pub struct Props<'a, T: Clone + Default + 'a> {
         static_value: &'static str,
         #[props(required)]
         value: &'a T,
@@ -90,14 +91,69 @@ mod t6 {
     #[derive(Properties, Clone)]
     pub struct Props<T: FromStr + Clone>
     where
-    <T as FromStr>::Err: Clone,
+        <T as FromStr>::Err: Clone,
     {
         #[props(required)]
         value: Result<T, <T as FromStr>::Err>,
     }
 
     fn required_prop_generics_with_where_clause_should_work() {
-        Props::<String>::builder().value(Ok(String::from(""))).build();
+        Props::<String>::builder()
+            .value(Ok(String::from("")))
+            .build();
+    }
+}
+
+mod t7 {
+    use super::*;
+
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub enum Foo {
+        One,
+        Two,
+    }
+
+    #[derive(Clone, Properties)]
+    pub struct Props {
+        #[props(default = "default_value")]
+        value: Foo,
+    }
+
+    fn default_value() -> Foo {
+        Foo::One
+    }
+
+    fn default_value_should_work() {
+        let props = Props::builder().build();
+        assert_eq!(props.value, Foo::One);
+        Props::builder().value(Foo::Two).build();
+    }
+}
+
+mod t8 {
+    use super::*;
+    use std::str::FromStr;
+
+    #[derive(Clone, Properties)]
+    pub struct Props<T: FromStr + Clone>
+    where
+        <T as FromStr>::Err: Clone,
+    {
+        #[props(default = "default_value")]
+        value: Result<T, <T as FromStr>::Err>,
+    }
+
+    fn default_value<T: FromStr + Clone>() -> Result<T, <T as FromStr>::Err>
+    where
+        <T as FromStr>::Err: Clone,
+    {
+        "123".parse()
+    }
+
+    fn default_value_with_generics_should_work() {
+        let props = Props::<i32>::builder().build();
+        assert_eq!(props.value, Ok(123));
+        Props::<i32>::builder().value(Ok(456)).build();
     }
 }
 

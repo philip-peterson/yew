@@ -1,11 +1,10 @@
 #![recursion_limit = "256"]
 
-use failure::Error;
+use anyhow::Error;
 use serde_derive::{Deserialize, Serialize};
 use yew::format::{Json, Nothing, Toml};
 use yew::services::fetch::{FetchService, FetchTask, Request, Response};
 use yew::services::websocket::{WebSocketService, WebSocketStatus, WebSocketTask};
-use yew::services::Task;
 use yew::{html, Component, ComponentLink, Html, ShouldRender};
 
 type AsBinary = bool;
@@ -167,7 +166,7 @@ impl Component for Model {
                     }
                 }
                 WsAction::Disconnect => {
-                    self.ws.take().unwrap().cancel();
+                    self.ws.take();
                 }
                 WsAction::Lost => {
                     self.ws = None;

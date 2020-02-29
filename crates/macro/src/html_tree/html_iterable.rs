@@ -12,7 +12,7 @@ pub struct HtmlIterable(Expr);
 impl PeekValue<()> for HtmlIterable {
     fn peek(cursor: Cursor) -> Option<()> {
         let (ident, _) = cursor.ident()?;
-        (ident.to_string() == "for").as_option()
+        (ident == "for").as_option()
     }
 }
 
@@ -41,8 +41,7 @@ impl ToTokens for HtmlIterable {
         let expr = &self.0;
         let new_tokens = quote_spanned! {expr.span()=> {
             let mut __yew_vlist = ::yew::virtual_dom::VList::default();
-            let __yew_nodes: &mut ::std::iter::Iterator<Item = _> = &mut(#expr);
-            for __yew_node in __yew_nodes.into_iter() {
+            for __yew_node in #expr {
                 __yew_vlist.add_child(__yew_node.into());
             }
             ::yew::virtual_dom::VNode::from(__yew_vlist)
