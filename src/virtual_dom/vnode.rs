@@ -22,6 +22,54 @@ pub enum VNode {
     VRef(Node),
 }
 
+impl VDiffSsr for VNode {
+    /// Remove VNode from parent.
+    fn detach(&mut self, parent: &SsrElement) -> Option<SsrNode> {
+        match *self {
+            VNode::VTag(ref mut vtag) => vtag.detach(parent),
+            VNode::VText(ref mut vtext) => vtext.detach(parent),
+            VNode::VComp(ref mut vcomp) => vcomp.detach(parent),
+            VNode::VList(ref mut vlist) => vlist.detach(parent),
+            VNode::VRef(ref node) => {
+                let sibling = node.next_sibling();
+                parent
+                    .remove_child(node)
+                    .expect("can't remove node by VRef");
+                sibling
+            }
+        }
+    }
+
+    fn apply(
+        &mut self,
+        parent: &SsrElement,
+        previous_sibling: Option<&SsrNode>,
+        ancestor: Option<VNode>,
+    ) -> Option<SsrNode> {
+        match *self {
+            VNode::VTag(ref mut vtag) => vtag.apply_ssr(parent, previous_sibling, ancestor),
+            VNode::VText(ref mut vtext) => vtext.apply_ssr(parent, previous_sibling, ancestor),
+            VNode::VComp(ref mut vcomp) => vcomp.apply_ssr(parent, previous_sibling, ancestor),
+            VNode::VList(ref mut vlist) => vlist.apply_ssr(parent, previous_sibling, ancestor),
+            VNode::VRef(ref mut node) => {
+                let sibling = match ancestor {
+                    Some(mut n) => n.detach(parent),
+                    None => None,
+                };
+                if let Some(sibling) = sibling {
+                    parent
+                        .insert_before(node, &sibling)
+                        .expect("can't insert element before sibling");
+                } else {
+                    parent.append_child(node);
+                }
+
+                Some(node.to_owned())
+            }
+        }
+    }
+}
+
 impl VDiff for VNode {
     /// Remove VNode from parent.
     fn detach(&mut self, parent: &Element) -> Option<Node> {

@@ -55,6 +55,28 @@ impl<COMP: Component> Scope<COMP> {
     }
 
     /// Mounts a component with `props` to the specified `element` in the DOM.
+    pub(crate) fn prepare_for_mount(
+        self,
+        node_ref: NodeRef,
+        props: COMP::Properties,
+    ) -> Scope<COMP> {
+        let mut scope = self;
+        let link = ComponentLink::connect(&scope);
+
+        // TODO separate PreReadyState and ReadyState into Y and (X, Y).
+        let pre_ready_state = PreReadyState {
+            node_ref,
+            link,
+            props,
+        };
+        *scope.shared_state.borrow_mut() = ComponentState::ReadyForPremount(pre_ready_state);
+        scope.precreate();
+        scope.premounted();
+
+        scope
+    }
+
+    /// Mounts a component with `props` to the specified `element` in the DOM.
     pub(crate) fn mount_in_place(
         self,
         element: Element,
@@ -71,11 +93,27 @@ impl<COMP: Component> Scope<COMP> {
             props,
             ancestor,
         };
-        *scope.shared_state.borrow_mut() = ComponentState::Ready(ready_state);
+        *scope.shared_state.borrow_mut() = ComponentState::ReadyForMount(ready_state);
+        scope.precreate();
+        scope.premounted();
         scope.create();
         scope.mounted();
 
         scope
+    }
+    
+    /// Schedules a task to call the mounted method on a component and optionally re-render
+    pub(crate) fn premounted(&mut self) {
+        let shared_state = self.shared_state.clone();
+        let mounted = PremountedComponent { shared_state };
+        scheduler().push_mount(Box::new(mounted));
+    }
+
+    /// Schedules a task to create and prerender a component
+    pub(crate) fn precreate(&mut self) {
+        let shared_state = self.shared_state.clone();
+        let create = PrecreatedComponent { shared_state };
+        scheduler().push_create(Box::new(create));
     }
     
     /// Schedules a task to call the mounted method on a component and optionally re-render
@@ -121,7 +159,9 @@ impl<COMP: Component> Scope<COMP> {
 
 enum ComponentState<COMP: Component> {
     Empty,
-    Ready(ReadyState<COMP>),
+    ReadyForPremount(PreReadyState<COMP>),
+    Precreated(CreatedState<COMP>),
+    ReadyForMount(ReadyState<COMP>),
     Created(CreatedState<COMP>),
     Processing,
     Destroyed,
@@ -131,12 +171,29 @@ impl<COMP: Component> fmt::Display for ComponentState<COMP> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let name = match self {
             ComponentState::Empty => "empty",
-            ComponentState::Ready(_) => "ready",
+            ComponentState::ReadyForMount(_) => "ready",
             ComponentState::Created(_) => "created",
             ComponentState::Processing => "processing",
             ComponentState::Destroyed => "destroyed",
         };
         write!(f, "{}", name)
+    }
+}
+
+struct PreReadyState<COMP: Component> {
+    node_ref: NodeRef,
+    props: COMP::Properties,
+    link: ComponentLink<COMP>,
+}
+
+impl<COMP: Component> PreReadyState<COMP> {
+    fn create(self) -> PreCreatedState<COMP> {
+        PreCreatedState {
+            component: COMP::create(self.props, self.link),
+            element: self.element,
+            last_frame: self.ancestor,
+            node_ref: self.node_ref,
+        }
     }
 }
 
@@ -208,7 +265,53 @@ where
         self.shared_state.replace(match current_state {
             ComponentState::Created(state) => ComponentState::Created(state.mounted()),
             ComponentState::Destroyed => current_state,
-            ComponentState::Empty | ComponentState::Processing | ComponentState::Ready(_) => {
+            ComponentState::Empty | ComponentState::Processing | ComponentState::ReadyForMount(_) => {
+                panic!("unexpected component state: {}", current_state);
+            }
+        });
+    }
+}
+
+struct PremountedComponent<COMP>
+where
+    COMP: Component,
+{
+    shared_state: Shared<ComponentState<COMP>>,
+}
+
+impl<COMP> Runnable for PremountedComponent<COMP>
+where
+    COMP: Component,
+{
+    fn run(self: Box<Self>) {
+        let current_state = self.shared_state.replace(ComponentState::Processing);
+        self.shared_state.replace(match current_state {
+            ComponentState::Created(state) => ComponentState::Created(state.premounted()),
+            ComponentState::Destroyed => current_state,
+            ComponentState::Empty | ComponentState::Processing | ComponentState::ReadyForMount(_) => {
+                panic!("unexpected component state: {}", current_state);
+            }
+        });
+    }
+}
+
+struct PrecreateComponent<COMP>
+where
+    COMP: Component,
+{
+    shared_state: Shared<ComponentState<COMP>>,
+}
+
+impl<COMP> Runnable for PrecreateComponent<COMP>
+where
+    COMP: Component,
+{
+    fn run(self: Box<Self>) {
+        let current_state = self.shared_state.replace(ComponentState::Processing);
+        self.shared_state.replace(match current_state {
+            ComponentState::ReadyForPremount(state) => ComponentState::Precreated(state.precreate().update()),
+            ComponentState::Precreated(_) | ComponentState::Destroyed => current_state,
+            ComponentState::Empty | ComponentState::Processing => {
                 panic!("unexpected component state: {}", current_state);
             }
         });
@@ -229,7 +332,7 @@ where
     fn run(self: Box<Self>) {
         let current_state = self.shared_state.replace(ComponentState::Processing);
         self.shared_state.replace(match current_state {
-            ComponentState::Ready(state) => ComponentState::Created(state.create().update()),
+            ComponentState::ReadyForMount(state) => ComponentState::Created(state.create().update()),
             ComponentState::Created(_) | ComponentState::Destroyed => current_state,
             ComponentState::Empty | ComponentState::Processing => {
                 panic!("unexpected component state: {}", current_state);
@@ -257,7 +360,7 @@ where
                     last_frame.detach(&this.element);
                 }
             }
-            ComponentState::Ready(mut this) => {
+            ComponentState::ReadyForMount(mut this) => {
                 if let Some(ancestor) = &mut this.ancestor {
                     ancestor.detach(&this.element);
                 }
@@ -295,7 +398,7 @@ where
                 ComponentState::Created(next_state)
             }
             ComponentState::Destroyed => current_state,
-            ComponentState::Processing | ComponentState::Ready(_) | ComponentState::Empty => {
+            ComponentState::Processing | ComponentState::ReadyForMount(_) | ComponentState::Empty => {
                 panic!("unexpected component state: {}", current_state);
             }
         });

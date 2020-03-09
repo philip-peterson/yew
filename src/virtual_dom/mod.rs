@@ -204,6 +204,18 @@ pub trait VDiff {
     ) -> Option<Node>;
 }
 
+/// Like VDiff, but covers the SSR use case
+pub trait VDiff {
+    fn detach(&mut self, parent: &SsrElement) -> Option<SsrNode>;
+
+    fn apply(
+        &mut self,
+        parent: &SsrElement,
+        previous_sibling: Option<&SsrNode>,
+        ancestor: Option<VNode>,
+    ) -> Option<SsrNode>;
+}
+
 /// Transform properties to the expected type.
 pub trait Transformer<FROM, TO> {
     /// Transforms one type to another.
